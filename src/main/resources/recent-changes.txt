@@ -1,3 +1,5 @@
+- Add IEEE 754 converter
+- Run on Docker without needing 'java.policy' (JayJay1989BE)
 - Trick command -u flag can now be used alone, and command output will notify when an update was performed
 - Quotes can now be removed by the quote owner
 - Improve quote battle timer updates, should now occur at 1 minute intervals max

@@ -1,24 +1,22 @@
 package com.tterrag.k9.commands;
 
-import java.io.File;
 import java.util.stream.Collectors;
 
+import com.tterrag.k9.commands.api.*;
 import org.apache.commons.io.IOUtils;
 
 import com.google.common.base.Charsets;
-import com.google.gson.Gson;
+
 import com.tterrag.k9.K9;
-import com.tterrag.k9.commands.api.Command;
-import com.tterrag.k9.commands.api.CommandBase;
-import com.tterrag.k9.commands.api.CommandContext;
 import com.tterrag.k9.listeners.CommandListener;
 
 import discord4j.core.DiscordClient;
+
 import reactor.core.publisher.Mono;
 
 @Command
 public class CommandAbout extends CommandBase {
-    
+
     public CommandAbout() {
         super("about", false);
     }
@@ -45,6 +43,7 @@ public class CommandAbout extends CommandBase {
                     .setTitle("K9 " + ver)
                     .setUrl("http://tterrag.com/k9")
                     .addField("Source", "https://github.com/tterrag1098/K9", false)
+                    .addField("Source Docker Version","https://github.com/JayJay1989/K9", false)
                     .addField("Recent Changes", recentChanges.block(), false)
             ));
     }

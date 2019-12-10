@@ -51,8 +51,8 @@ public class K9 {
         private String authKey;
         
         @Parameter(names = "--admins", description = "A list of user IDs that are admins", converter = ConvertAdmins.class)
-        private List<Snowflake> admins = Collections.singletonList(Snowflake.of(140245257416736769L)); // tterrag
-        
+        private List<Snowflake> admins = Collections.singletonList(Snowflake.of(102119486710087680L)); // JayJay1989BE
+
         @Parameter(names = { "--ircnick" }, hidden = true)
         private String ircNickname;
         
@@ -72,6 +72,7 @@ public class K9 {
     
     public static void main(String[] argv) {
 
+        //region Java Policy
         String serverPolicyPath = "/policies/app.policy";
         URL serverPolicyURL = K9.class.getResource(serverPolicyPath);
 
@@ -82,6 +83,7 @@ public class K9 {
 
         System.setProperty("java.security.policy", serverPolicyURL.toString());
         Policy.getPolicy().refresh();
+        //endregion
 
         try {
             AccessController.checkPermission(new FilePermission(".", "read"));
@@ -119,7 +121,7 @@ public class K9 {
                 .filter(e -> e.getMessage().getAuthor().map(u -> !u.isBot()).orElse(true))
                 .flatMap(commandListener::onMessage)
                 .flatMap(IncrementListener.INSTANCE::onMessage)
-                .doOnNext(EnderIOListener.INSTANCE::onMessage)
+                //.doOnNext(EnderIOListener.INSTANCE::onMessage)
                 .subscribe();
         
         // Make sure shutdown things are run, regardless of where shutdown came from
@@ -160,8 +162,8 @@ public class K9 {
         log.info("Connected to {} guilds.", event.getGuilds().size());
         event.getClient().getGuilds().doOnNext(g -> log.info("\t" + g.getName())).subscribe();
 
-        McpDownloader.INSTANCE.start();
-        YarnDownloader.INSTANCE.start();
+        //McpDownloader.INSTANCE.start();
+        //YarnDownloader.INSTANCE.start();
 //        if (args.loveTropicsKey != null) {
 //            instance.getDispatcher().registerListener(new LoveTropicsListener(args.loveTropicsKey, args.minDonation));
 //        }
@@ -173,6 +175,7 @@ public class K9 {
                    .map(u -> "@" + u.getUsername() + " help")
                    .flatMap(s -> event.getClient().updatePresence(Presence.online(Activity.playing(s))))
                    .subscribe();
+        log.info("Startup complete!");
     }
 
     public static String getVersion() {
