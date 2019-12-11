@@ -10,6 +10,7 @@ import java.security.AccessController;
 import java.security.Policy;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Scanner;
 
 import com.beust.jcommander.JCommander;
@@ -68,18 +69,12 @@ public class K9 {
     
     public static void main(String[] argv) {
 
-        //region Java Policy
-        String serverPolicyPath = "/policies/app.policy";
-        URL serverPolicyURL = K9.class.getResource(serverPolicyPath);
+        String policyPath = "/policies/app.policy";
+        URL policy = K9.class.getResource(policyPath);
+        Objects.requireNonNull(policy, () -> "Could not find policy resource at " + policyPath);
 
-        if (serverPolicyURL == null) {
-            System.err.println("getResource returned NULL");
-            return;
-        }
-
-        System.setProperty("java.security.policy", serverPolicyURL.toString());
+        System.setProperty("java.security.policy", policy.toString());
         Policy.getPolicy().refresh();
-        //endregion
 
         try {
             AccessController.checkPermission(new FilePermission(".", "read"));
@@ -117,8 +112,7 @@ public class K9 {
                 .filter(e -> e.getMessage().getAuthor().map(u -> !u.isBot()).orElse(true))
                 .flatMap(commandListener::onMessage)
                 .flatMap(IncrementListener.INSTANCE::onMessage)
-                //.doOnNext(EnderIOListener.INSTANCE::onMessage)
-                .subscribe();
+               .subscribe();
         
         // Make sure shutdown things are run, regardless of where shutdown came from
         // The above System.exit(0) will trigger this hook
