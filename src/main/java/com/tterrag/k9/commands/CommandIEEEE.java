@@ -35,7 +35,6 @@ public class CommandIEEEE extends CommandBase {
         String myLong = args.replace("\"", "");
         float l = Float.parseFloat(myLong+"f");
         int bits = Float.floatToIntBits(l);
-        String valueBits = Float.to)
         int signbit = bits >>> 31;
         boolean isSignPositive = (signbit == 0);
         int exponent = (bits >>> 23 & ((1 << 8) - 1)) - ((1 << 7) - 1);
@@ -54,19 +53,17 @@ public class CommandIEEEE extends CommandBase {
         }
 
         return(
-                "Start: (" + myLong + ")10 [(" + bits + ")2]" +
+                "Start: (" + myLong + ")DEC" +
                         "\nSign: " + signbit + (isSignPositive ? " (positief)" : " (negatief)" ) +
                         "\nExponent: " + " 127 + " + exponent + " = " + (127+exponent) + " => " + exponentBits +
                         "\nFraction: " + fractionBits  +
-                        "\n      sign       Exponent         fraction" +
-                        "\nBits: " + signbit + " " + exponentBits + " " + fractionBits +
-                        "\n => (" + hex.toString().toUpperCase() + ")16 (IEEEE Short)"
+                        "\n0x" + hex.toString().toUpperCase() + " = " + signbit + " " + exponentBits + " " + fractionBits
         );
     }
 
     @Override
     public String getDescription(CommandContext ctx) {
-        return "Convert a decimal to a 32bit floating point binary and hex";
+        return "Convert a decimal to a 32bit Floating Point Binary and Hex";
     }
 
     @Override

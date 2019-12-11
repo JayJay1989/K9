@@ -19,11 +19,8 @@ import com.google.common.io.Files;
 import com.tterrag.k9.commands.api.CommandRegistrar;
 import com.tterrag.k9.irc.IRC;
 import com.tterrag.k9.listeners.CommandListener;
-import com.tterrag.k9.listeners.EnderIOListener;
 import com.tterrag.k9.listeners.IncrementListener;
 import com.tterrag.k9.logging.PrettifyMessageCreate;
-import com.tterrag.k9.mappings.mcp.McpDownloader;
-import com.tterrag.k9.mappings.yarn.YarnDownloader;
 import com.tterrag.k9.util.ConvertAdmins;
 import com.tterrag.k9.util.PaginatedMessageFactory;
 import com.tterrag.k9.util.Threads;
@@ -34,7 +31,6 @@ import discord4j.core.DiscordClientBuilder;
 import discord4j.core.event.domain.lifecycle.ReadyEvent;
 import discord4j.core.event.domain.message.MessageCreateEvent;
 import discord4j.core.event.domain.message.ReactionAddEvent;
-import discord4j.core.object.entity.Guild;
 import discord4j.core.object.presence.Activity;
 import discord4j.core.object.presence.Presence;
 import discord4j.core.object.util.Snowflake;
@@ -161,13 +157,6 @@ public class K9 {
         log.info("Bot connected, starting up...");
         log.info("Connected to {} guilds.", event.getGuilds().size());
         event.getClient().getGuilds().doOnNext(g -> log.info("\t" + g.getName())).subscribe();
-
-        //McpDownloader.INSTANCE.start();
-        //YarnDownloader.INSTANCE.start();
-//        if (args.loveTropicsKey != null) {
-//            instance.getDispatcher().registerListener(new LoveTropicsListener(args.loveTropicsKey, args.minDonation));
-//        }
-
         commands.complete();
         
         // Change playing text to global help command
