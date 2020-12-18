@@ -22,9 +22,6 @@ import com.tterrag.k9.commands.api.CommandRegistrar;
 import com.tterrag.k9.listeners.CommandListener;
 import com.tterrag.k9.listeners.IncrementListener;
 import com.tterrag.k9.logging.PrettifyMessageCreate;
-import com.tterrag.k9.mappings.Yarn2McpService;
-import com.tterrag.k9.mappings.mcp.McpDownloader;
-import com.tterrag.k9.mappings.yarn.YarnDownloader;
 import com.tterrag.k9.util.ConvertAdmins;
 import com.tterrag.k9.util.PaginatedMessageFactory;
 import com.tterrag.k9.util.ServiceManager;
@@ -59,39 +56,9 @@ public class K9 {
         
         @Parameter(names = "--admins", description = "A list of user IDs that are admins", converter = ConvertAdmins.class)
         private List<Snowflake> admins = Collections.singletonList(Snowflake.of(102119486710087680L)); // JayJay1989BE
-
-        @Parameter(names = { "--ircnick" }, hidden = true)
-        private String ircNickname;
-        private List<Snowflake> admins = Collections.singletonList(Snowflake.of(140245257416736769L)); // tterrag
-        
-        @Parameter(names = "--ltapi", hidden = true) 
-        private String loveTropicsApi;
-        
-        @Parameter(names = "--ltkey", hidden = true)
-        private String loveTropicsKey;
-        
-        @Parameter(names = " --mindonation", hidden = true)
-        private int minDonation = 25;
-        
-        @Parameter(names = "--yarn2mcpoutput", hidden = true)
-        private String yarn2mcpOutput = null;
-        
-        @Parameter(names = "--yarn2mcpuser", hidden = true)
-        private String yarn2mcpUser = null;
-        
-        @Parameter(names = "--yarn2mcppass", hidden = true)
-        private String yarn2mcpPass = null;
     }
 
     public static void main(String[] argv) {
-
-        String policyPath = "/policies/app.policy";
-        URL policy = K9.class.getResource(policyPath);
-        Objects.requireNonNull(policy, () -> "Could not find policy resource at " + policyPath);
-
-        System.setProperty("java.security.policy", policy.toString());
-        Policy.getPolicy().refresh();
-
         String policyPath = "/policies/app.policy";
         URL policy = K9.class.getResource(policyPath);
         Objects.requireNonNull(policy, () -> "Could not find policy resource at " + policyPath);
@@ -183,21 +150,7 @@ public class K9 {
 
             .eventService("Increments", MessageCreateEvent.class, events -> events
                     .filter(this::isUser)
-                    .flatMap(IncrementListener.INSTANCE::onMessage))
-
-            // I'll add this back when/if it's needed
-            /*
-            .eventService("EnderIO", MessageCreateEvent.class, events -> events
-                    .filter(this::isUser)
-                    .doOnNext(EnderIOListener.INSTANCE::onMessage))
-            */
-            .service("Yarn Downloader", YarnDownloader.INSTANCE::start)
-            .service("MCP Downloader", McpDownloader.INSTANCE::start);
-
-        if (args.yarn2mcpOutput != null) {
-            final Yarn2McpService yarn2mcp = new Yarn2McpService(args.yarn2mcpOutput, args.yarn2mcpUser, args.yarn2mcpPass);
-            services.service("Yarn-Over-MCP", yarn2mcp::start);
-        }
+                    .flatMap(IncrementListener.INSTANCE::onMessage));
 
         return Mono.fromRunnable(commands::slurpCommands)
                 .then(gateway.login())

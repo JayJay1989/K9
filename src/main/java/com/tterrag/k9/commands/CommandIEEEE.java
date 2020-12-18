@@ -1,5 +1,6 @@
 package com.tterrag.k9.commands;
 
+import com.tterrag.k9.K9;
 import com.tterrag.k9.commands.api.Argument;
 import com.tterrag.k9.commands.api.Command;
 import com.tterrag.k9.commands.api.CommandBase;
@@ -67,8 +68,7 @@ public class CommandIEEEE extends CommandBase {
     }
 
     @Override
-    public void onRegister(DiscordClient client) {
-        super.onRegister(client);
+    public void onRegister(K9 k9) {
+        super.onRegister(k9);
     }
-
 }

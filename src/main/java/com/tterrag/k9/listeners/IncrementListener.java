@@ -18,7 +18,7 @@ import reactor.core.publisher.Mono;
 
 @Slf4j
 public enum IncrementListener {
-
+    
     INSTANCE;
     
     private static final SaveHelper<Map<String, Long>> saveHelper = new SaveHelper<>(new File("counts"), new Gson(), new HashMap<>());

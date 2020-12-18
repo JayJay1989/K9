@@ -18,17 +18,17 @@ import reactor.core.publisher.Mono;
 
 @Command
 public class CommandAbout extends CommandBase {
-
+    
     public CommandAbout() {
         super("about", false);
     }
-
+    
     private final Mono<String> recentChanges = Mono.fromCallable(() -> {
         return IOUtils.readLines(K9.class.getResourceAsStream("/recent-changes.txt"), Charsets.UTF_8)
                 .stream()
                 .collect(Collectors.joining("\n"));
     }).cache();
-
+    
     @Override
     public void onRegister(K9 k9) {
         super.onRegister(k9);
@@ -52,7 +52,7 @@ public class CommandAbout extends CommandBase {
                     .addField("Status", statusText.toString(), false)
                     .addField("Uptime", DurationFormatUtils.formatDurationWords((System.currentTimeMillis() - K9.getConnectionTimestamp()), true, false), false)
                     .addField("Source", "https://github.com/tterrag1098/K9", false)
-                    .addField("Fork","https://github.com/JayJay1989/K9", false)
+                    .addField("Fork", "https://github.com/JayJay1989/K9", false)
                     .addField("Recent Changes", changes, false)
             )));
     }
