@@ -12,29 +12,39 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Scanner;
+import java.util.function.Function;
 
 import com.beust.jcommander.JCommander;
 import com.beust.jcommander.Parameter;
 import com.google.common.base.Charsets;
 import com.google.common.io.Files;
 import com.tterrag.k9.commands.api.CommandRegistrar;
-import com.tterrag.k9.irc.IRC;
 import com.tterrag.k9.listeners.CommandListener;
 import com.tterrag.k9.listeners.IncrementListener;
 import com.tterrag.k9.logging.PrettifyMessageCreate;
+import com.tterrag.k9.mappings.Yarn2McpService;
+import com.tterrag.k9.mappings.mcp.McpDownloader;
+import com.tterrag.k9.mappings.yarn.YarnDownloader;
 import com.tterrag.k9.util.ConvertAdmins;
 import com.tterrag.k9.util.PaginatedMessageFactory;
+import com.tterrag.k9.util.ServiceManager;
 import com.tterrag.k9.util.Threads;
-import com.tterrag.k9.util.annotation.NonNull;
 
+import discord4j.common.util.Snowflake;
 import discord4j.core.DiscordClient;
 import discord4j.core.DiscordClientBuilder;
+import discord4j.core.GatewayDiscordClient;
+import discord4j.core.event.EventDispatcher;
 import discord4j.core.event.domain.lifecycle.ReadyEvent;
 import discord4j.core.event.domain.message.MessageCreateEvent;
 import discord4j.core.event.domain.message.ReactionAddEvent;
 import discord4j.core.object.presence.Activity;
 import discord4j.core.object.presence.Presence;
-import discord4j.core.object.util.Snowflake;
+import discord4j.core.shard.GatewayBootstrap;
+import discord4j.gateway.GatewayOptions;
+import discord4j.gateway.intent.Intent;
+import discord4j.gateway.intent.IntentSet;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import reactor.core.publisher.Hooks;
 import reactor.core.publisher.Mono;
@@ -52,22 +62,35 @@ public class K9 {
 
         @Parameter(names = { "--ircnick" }, hidden = true)
         private String ircNickname;
+        private List<Snowflake> admins = Collections.singletonList(Snowflake.of(140245257416736769L)); // tterrag
         
-        @Parameter(names = { "--ircpw" }, hidden = true)
-        private String ircPassword;
+        @Parameter(names = "--ltapi", hidden = true) 
+        private String loveTropicsApi;
         
         @Parameter(names = "--ltkey", hidden = true)
         private String loveTropicsKey;
         
         @Parameter(names = " --mindonation", hidden = true)
         private int minDonation = 25;
+        
+        @Parameter(names = "--yarn2mcpoutput", hidden = true)
+        private String yarn2mcpOutput = null;
+        
+        @Parameter(names = "--yarn2mcpuser", hidden = true)
+        private String yarn2mcpUser = null;
+        
+        @Parameter(names = "--yarn2mcppass", hidden = true)
+        private String yarn2mcpPass = null;
     }
-    
-    private static Arguments args;
-    
-    public static @NonNull CommandRegistrar commands = new CommandRegistrar(null);
-    
+
     public static void main(String[] argv) {
+
+        String policyPath = "/policies/app.policy";
+        URL policy = K9.class.getResource(policyPath);
+        Objects.requireNonNull(policy, () -> "Could not find policy resource at " + policyPath);
+
+        System.setProperty("java.security.policy", policy.toString());
+        Policy.getPolicy().refresh();
 
         String policyPath = "/policies/app.policy";
         URL policy = K9.class.getResource(policyPath);
@@ -82,47 +105,114 @@ public class K9 {
             throw new RuntimeException("Invalid policy settings!", e);
         }
         
-        args = new Arguments();
-        JCommander.newBuilder().addObject(args).build().parse(argv);
-        
         String protocol = K9.class.getResource("").getProtocol();
         if (!"jar".equals(protocol)) { // Only enable this in IDEs
             Hooks.onOperatorDebug();
         }
+        
+        Arguments args = new Arguments();
+        JCommander.newBuilder().addObject(args).build().parse(argv);
+        
+        new K9(args).start().block();
+    }
+    
+    private final Arguments args;
+    @Getter
+    private final DiscordClient client;
+    @Getter
+    private final CommandRegistrar commands;
+    @Getter
+    private final ServiceManager services;
 
-        DiscordClient client = new DiscordClientBuilder(args.authKey)
+    private static long initialConnectionTime;
+    
+    public K9(Arguments args) {
+        this.args = args;
+        this.client = DiscordClientBuilder.create(args.authKey)
                 .build();
         PrettifyMessageCreate.client = client;
         
-        commands = new CommandRegistrar(client);
+        this.commands = new CommandRegistrar(this);
+        this.services = new ServiceManager();
+    }
+    
+    public Mono<Void> start() {
+        GatewayBootstrap<GatewayOptions> gateway = client.gateway()
+        .setEventDispatcher(EventDispatcher.builder()
+        		.eventScheduler(Schedulers.boundedElastic())
+        		.build())
+        .setEnabledIntents(IntentSet.of(
+                Intent.GUILDS, Intent.GUILD_MEMBERS, Intent.GUILD_PRESENCES,
+                Intent.GUILD_MESSAGES, Intent.GUILD_MESSAGE_REACTIONS,
+                Intent.DIRECT_MESSAGES, Intent.DIRECT_MESSAGE_REACTIONS));
         
-        client.getEventDispatcher().on(ReadyEvent.class).subscribe(new K9()::onReady);
+        Function<EventDispatcher, Mono<Void>> onInitialReady = events -> events.on(ReadyEvent.class)
+                .next()
+                .doOnNext($ -> initialConnectionTime = System.currentTimeMillis())
+                .flatMap(e -> commands.complete(e.getClient()));
 
-        client.getEventDispatcher().on(ReactionAddEvent.class)
-                .flatMap(evt -> PaginatedMessageFactory.INSTANCE.onReactAdd(evt)
-                        .doOnError(t -> log.error("Error paging message", t))
-                        .onErrorResume($ -> Mono.empty()))
-                .subscribe();
-        
         final CommandListener commandListener = new CommandListener(commands);
+
+        services
+            .eventService("Setup", ReadyEvent.class, events -> events
+                .doOnNext(e -> {
+                    log.info("Bot connected, starting up...");
+                    log.info("Connected to {} guilds.", e.getGuilds().size());
+                })
+                .map(e -> e.getClient())
+                .flatMap(c -> Mono.zip( // These actions could be slow, so run them in parallel
+                    c.getGuilds() // Print all connected guilds
+                        .collectList()
+                        .doOnNext(guilds -> guilds.forEach(g -> log.info("\t" + g.getName()))),
+                    c.getSelf() // Set initial presence
+                        .map(u ->"@" + u.getUsername() + " help")
+                        .flatMap(s -> c.updatePresence(Presence.online(Activity.playing(s))))
+                ))
+            .then())
+
+            .eventService("Pagination", ReactionAddEvent.class, events -> events
+                .flatMap(evt -> PaginatedMessageFactory.INSTANCE.onReactAdd(evt)
+                    .doOnError(t -> log.error("Error paging message", t))
+                    .onErrorResume($ -> Mono.empty())
+                    .thenReturn(evt))
+                .then())
+
+            .eventService("Commands", MessageCreateEvent.class, events -> events
+                    .filter(this::isUser)
+                    .flatMap(commandListener::onMessage))
+
+            .eventService("Increments", MessageCreateEvent.class, events -> events
+                    .filter(this::isUser)
+                    .flatMap(IncrementListener.INSTANCE::onMessage))
+
+            // I'll add this back when/if it's needed
+            /*
+            .eventService("EnderIO", MessageCreateEvent.class, events -> events
+                    .filter(this::isUser)
+                    .doOnNext(EnderIOListener.INSTANCE::onMessage))
+            */
+            .service("Yarn Downloader", YarnDownloader.INSTANCE::start)
+            .service("MCP Downloader", McpDownloader.INSTANCE::start);
+
+        if (args.yarn2mcpOutput != null) {
+            final Yarn2McpService yarn2mcp = new Yarn2McpService(args.yarn2mcpOutput, args.yarn2mcpUser, args.yarn2mcpPass);
+            services.service("Yarn-Over-MCP", yarn2mcp::start);
+        }
+
+        return Mono.fromRunnable(commands::slurpCommands)
+                .then(gateway.login())
+                .flatMap(c -> Mono.when(onInitialReady.apply(c.getEventDispatcher()), services.start(c)).thenReturn(c))
+                .flatMap(this::teardown);
+    }
+
+    private boolean isUser(MessageCreateEvent evt) {
+        return evt.getMessage().getAuthor().map(u -> !u.isBot()).orElse(true);
+    }
+
+    private Mono<Void> teardown(GatewayDiscordClient gatewayClient) {
         
-        client.getEventDispatcher().on(MessageCreateEvent.class)
-                .filter(e -> e.getMessage().getContent().isPresent())
-                .flatMap(IRC.INSTANCE::onMessage)
-                .filter(e -> e.getMessage().getAuthor().map(u -> !u.isBot()).orElse(true))
-                .flatMap(commandListener::onMessage)
-                .flatMap(IncrementListener.INSTANCE::onMessage)
-               .subscribe();
-        
-        // Make sure shutdown things are run, regardless of where shutdown came from
-        // The above System.exit(0) will trigger this hook
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            commands.onShutdown();
-            client.logout().block();
-        }));
-                
         // Handle "stop" and any future commands
-        Mono.fromCallable(() -> {
+        Mono<Void> consoleHandler = Mono.<Void>fromCallable(() -> {
             Scanner scan = new Scanner(System.in);
             while (true) {
                 while (scan.hasNextLine()) {
@@ -133,32 +223,18 @@ public class K9 {
                 }
                 Threads.sleep(100);
             }
-        }).subscribeOn(Schedulers.newSingle("Console Listener"))
-          .subscribe();
-
-        if(args.ircNickname != null && args.ircPassword != null) {
-            Mono.fromRunnable(() -> IRC.INSTANCE.connect(args.ircNickname, args.ircPassword))
-                .publishOn(Schedulers.newSingle("IRC Thread"))
-                .subscribe();
-        }
+        }).subscribeOn(Schedulers.newSingle("Console Listener", true));
         
-        commands.slurpCommands();
+        // Make sure shutdown things are run, regardless of where shutdown came from
+        // The above System.exit(0) will trigger this hook
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            commands.onShutdown();
+            gatewayClient.logout().block();
+        }));
         
-        client.login().block();
-    }
-    
-    public void onReady(ReadyEvent event) {
-        log.info("Bot connected, starting up...");
-        log.info("Connected to {} guilds.", event.getGuilds().size());
-        event.getClient().getGuilds().doOnNext(g -> log.info("\t" + g.getName())).subscribe();
-        commands.complete();
-        
-        // Change playing text to global help command
-        event.getClient().getSelf()
-                   .map(u -> "@" + u.getUsername() + " help")
-                   .flatMap(s -> event.getClient().updatePresence(Presence.online(Activity.playing(s))))
-                   .subscribe();
-        log.info("Startup complete!");
+        return Mono.zip(consoleHandler, gatewayClient.onDisconnect())
+                   .then()
+                   .doOnTerminate(() -> log.error("Unexpected completion of main bot subscriber!"));
     }
 
     public static String getVersion() {
@@ -182,7 +258,11 @@ public class K9 {
         return ver;
     }
     
-    public static boolean isAdmin(Snowflake id) {
+    public boolean isAdmin(Snowflake id) {
         return args.admins.contains(id);
+    }
+
+    public static long getConnectionTimestamp() {
+        return initialConnectionTime;
     }
 }

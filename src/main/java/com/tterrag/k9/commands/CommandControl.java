@@ -1,8 +1,8 @@
 package com.tterrag.k9.commands;
 
-import java.util.HashSet;
 import java.util.Set;
 
+import com.google.common.collect.Sets;
 import com.google.gson.reflect.TypeToken;
 import com.tterrag.k9.commands.CommandControl.ControlData;
 import com.tterrag.k9.commands.api.Argument;
@@ -12,7 +12,7 @@ import com.tterrag.k9.commands.api.Flag;
 import com.tterrag.k9.util.Requirements;
 import com.tterrag.k9.util.Requirements.RequiredType;
 
-import discord4j.core.object.util.Permission;
+import discord4j.rest.util.Permission;
 import lombok.Value;
 import reactor.core.publisher.Mono;
 
@@ -21,7 +21,7 @@ public class CommandControl extends CommandPersisted<ControlData> {
 
     @Value
     public static class ControlData {
-        Set<String> commandBlacklist = new HashSet<>();
+        Set<String> commandBlacklist = Sets.newConcurrentHashSet();
     }
     
     private static final Flag FLAG_COMMANDS = new SimpleFlag('c', "commands", "Control settings related to commands.", false);

@@ -8,6 +8,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 
+import com.tterrag.k9.K9;
 import com.tterrag.k9.util.BakedMessage;
 import com.tterrag.k9.util.Monos;
 import com.tterrag.k9.util.Patterns;
@@ -17,17 +18,18 @@ import com.tterrag.k9.util.annotation.NonNullMethods;
 import com.tterrag.k9.util.annotation.NonNullParams;
 import com.tterrag.k9.util.annotation.Nullable;
 
-import discord4j.core.DiscordClient;
+import discord4j.core.GatewayDiscordClient;
 import discord4j.core.event.domain.message.MessageCreateEvent;
-import discord4j.core.object.entity.Channel;
 import discord4j.core.object.entity.Guild;
-import discord4j.core.object.entity.GuildChannel;
 import discord4j.core.object.entity.Member;
 import discord4j.core.object.entity.Message;
-import discord4j.core.object.entity.MessageChannel;
 import discord4j.core.object.entity.User;
-import discord4j.core.object.util.Snowflake;
+import discord4j.core.object.entity.channel.Channel;
+import discord4j.core.object.entity.channel.GuildChannel;
+import discord4j.core.object.entity.channel.MessageChannel;
 import discord4j.core.spec.EmbedCreateSpec;
+import discord4j.rest.util.AllowedMentions;
+import discord4j.common.util.Snowflake;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -42,6 +44,7 @@ import reactor.core.publisher.Mono;
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class CommandContext {
 
+    private final K9 k9;
     private final Message message;
     private final Optional<Snowflake> guildId;
     @Wither(onMethod = @__({ @NonNull }))
@@ -55,15 +58,16 @@ public class CommandContext {
     private final Optional<User> author;
     private final Mono<Member> member;
 
-    public CommandContext(MessageCreateEvent evt) {
-    	this(evt.getMessage(), evt.getGuildId());
+    public CommandContext(K9 k9, MessageCreateEvent evt) {
+    	this(k9, evt.getMessage(), evt.getGuildId());
     }
     
-    public CommandContext(Message message, Optional<Snowflake> guildId) {
-        this(message, guildId, new HashMap<>(), new HashMap<>());
+    public CommandContext(K9 k9, Message message, Optional<Snowflake> guildId) {
+        this(k9, message, guildId, new HashMap<>(), new HashMap<>());
     }
     
-    private CommandContext(Message message, Optional<Snowflake> guildId, Map<Flag, String> flags, Map<Argument<?>, String> args) {
+    private CommandContext(K9 k9, Message message, Optional<Snowflake> guildId, Map<Flag, String> flags, Map<Argument<?>, String> args) {
+        this.k9 = k9;
     	this.message = message;
     	this.guildId = guildId;
     	this.flags = Collections.unmodifiableMap(flags);
@@ -75,7 +79,7 @@ public class CommandContext {
     	this.member = message.getAuthorAsMember().cache();
     }
     
-    public DiscordClient getClient() {
+    public GatewayDiscordClient getClient() {
         return message.getClient();
     }
     
@@ -135,7 +139,7 @@ public class CommandContext {
     
     public Mono<Message> reply(String message) {
     	return getMessage().getChannel()
-			.transform(Monos.flatZipWith(sanitize(message), (chan, msg) -> chan.createMessage(m -> m.setContent(msg))));
+			.flatMap(chan -> chan.createMessage(m -> m.setContent(message).setAllowedMentions(AllowedMentions.builder().build())));
     }
 
     public Mono<Message> progress(String message) {
@@ -176,50 +180,17 @@ public class CommandContext {
         return Mono.error(new CommandException(message));
     }
     
+    public <T> Mono<T> error(String message, Throwable cause) {
+        return Mono.error(new CommandException(message, cause));
+    }
+    
     public <T> Mono<T> error(Throwable cause) {
         return Mono.error(new CommandException(cause));
     }
     
     public Mono<BakedMessage> sanitize(BakedMessage message) {
         return Mono.justOrEmpty(message.getContent())
-                   .flatMap(this::sanitize)
                    .map(message::withContent)
                    .defaultIfEmpty(message);
-    }
-    
-    public Mono<String> sanitize(String message) {
-    	return getGuild().flatMap(g -> sanitize(g, message)).switchIfEmpty(Mono.just(message));
-    }
-    
-    public static Mono<String> sanitize(Channel channel, String message) {
-        if (channel instanceof GuildChannel) {
-            return ((GuildChannel) channel).getGuild().flatMap(g -> sanitize(g, message));
-        }
-        return Mono.just(message);
-    }
-
-    public static Mono<String> sanitize(@Nullable Guild guild, String message) {        
-        Mono<String> result = Mono.just(message);
-        if (guild == null) return result;
-        
-    	Matcher matcher = Patterns.DISCORD_MENTION.matcher(message);
-    	while (matcher.find()) {
-            final String match = matcher.group();
-    	    Snowflake id = Snowflake.of(matcher.group(1));
-    	    Mono<String> name;
-    	    if (match.contains("&")) {
-    	        name = guild.getClient().getRoleById(guild.getId(), id).map(r -> "the " + r.getName());
-    	    } else {
-    	        Mono<Member> member = guild.getMembers().filter(p -> p.getId().equals(id)).single();
-    	        if (match.contains("!")) {
-    	            name = member.map(Member::getDisplayName).map(n -> n.replaceAll("@", "@\u200B"));
-    	        } else {
-    	            name = member.map(Member::getUsername);
-    	        }
-    	    }
-
-    		result = result.flatMap(m -> name.map(n -> m.replace(match, n)).defaultIfEmpty(m));
-        }
-        return result.map(s -> s.replace("@here", "everyone").replace("@everyone", "everyone").replace("@", "@\u200B"));
     }
 }

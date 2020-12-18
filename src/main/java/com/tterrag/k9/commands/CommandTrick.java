@@ -1,35 +1,33 @@
 package com.tterrag.k9.commands;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.TypeAdapter;
 import com.google.gson.reflect.TypeToken;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonWriter;
-import com.tterrag.k9.K9;
 import com.tterrag.k9.commands.CommandTrick.TrickData;
 import com.tterrag.k9.commands.api.Argument;
 import com.tterrag.k9.commands.api.Command;
 import com.tterrag.k9.commands.api.CommandContext;
 import com.tterrag.k9.commands.api.CommandPersisted;
-import com.tterrag.k9.commands.api.CommandRegistrar;
 import com.tterrag.k9.commands.api.Flag;
+import com.tterrag.k9.commands.api.ReadyContext;
 import com.tterrag.k9.listeners.CommandListener;
 import com.tterrag.k9.trick.Trick;
 import com.tterrag.k9.trick.TrickClojure;
@@ -46,17 +44,18 @@ import com.tterrag.k9.util.SaveHelper;
 import com.tterrag.k9.util.annotation.NonNull;
 import com.tterrag.k9.util.annotation.Nullable;
 
-import discord4j.core.DiscordClient;
+import discord4j.common.util.Snowflake;
 import discord4j.core.object.entity.Guild;
-import discord4j.core.object.util.Permission;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Permission;
 import lombok.RequiredArgsConstructor;
 import lombok.Value;
+import lombok.extern.slf4j.Slf4j;
 import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
 
 @Command
-public class CommandTrick extends CommandPersisted<Map<String, TrickData>> {
+@Slf4j
+public class CommandTrick extends CommandPersisted<ConcurrentHashMap<String, TrickData>> {
     
     @Value
     @RequiredArgsConstructor
@@ -111,26 +110,26 @@ public class CommandTrick extends CommandPersisted<Map<String, TrickData>> {
     static final String DEFAULT_PREFIX = "?";
     static LongFunction<String> prefixes = id -> DEFAULT_PREFIX;
 
-    private SaveHelper<Map<String, TrickData>> globalHelper;
-    private Map<String, TrickData> globalTricks;
+    private SaveHelper<ConcurrentHashMap<String, TrickData>> globalHelper;
+    private ConcurrentHashMap<String, TrickData> globalTricks;
     
-    private final Map<Long, Map<String, Trick>> trickCache = new HashMap<>();
+    private final Map<Long, Map<String, Trick>> trickCache = new ConcurrentHashMap<>();
 
     public CommandTrick() {
-        super("trick", false, HashMap::new);
+        super("trick", false, ConcurrentHashMap::new);
     }
     
     @Override
-    public void init(DiscordClient client, File dataFolder, Gson gson) {
-        super.init(client, dataFolder, gson);
-
-        globalHelper = new SaveHelper<>(dataFolder, gson, new HashMap<>());
+    public Mono<?> onReady(ReadyContext ctx) {
+        globalHelper = new SaveHelper<>(ctx.getDataFolder(), ctx.getGson(), new ConcurrentHashMap<>());
         globalTricks = globalHelper.fromJson("global_tricks.json", getDataType());
         
         TrickFactories.INSTANCE.addFactory(DEFAULT_TYPE, TrickSimple::new);
         
-        final CommandClojure clj = (CommandClojure) K9.commands.findCommand((Snowflake) null, "clj").get();
+        final CommandClojure clj = (CommandClojure) ctx.getK9().getCommands().findCommand((Snowflake) null, "clj").get();
         TrickFactories.INSTANCE.addFactory(TrickType.CLOJURE, code -> new TrickClojure(clj, code));
+        
+        return super.onReady(ctx);
     }
     
     @Override
@@ -166,6 +165,16 @@ public class CommandTrick extends CommandPersisted<Map<String, TrickData>> {
         });
     }
     
+    @Override
+    protected void onLoad(long guild, ConcurrentHashMap<String, TrickData> data) {
+        for (String key : new HashSet<>(data.keySet())) {
+            if (!Patterns.VALID_TRICK_NAME.matcher(key).matches()) {
+                TrickData removed = data.remove(key);
+                log.error("Trick with invalid name removed: " + key + " -> " + removed.getInput());
+            }
+        }
+    }
+    
     // Copied from Formatter
     // %[argument_index$][flags][width][.precision][t]conversion
     private static final Pattern fsPattern = Pattern.compile(
@@ -192,14 +201,14 @@ public class CommandTrick extends CommandPersisted<Map<String, TrickData>> {
     }
 
     @Override
-    protected TypeToken<Map<String, TrickData>> getDataType() {
-        return new TypeToken<Map<String, TrickData>>(){};
+    protected TypeToken<ConcurrentHashMap<String, TrickData>> getDataType() {
+        return new TypeToken<ConcurrentHashMap<String, TrickData>>(){};
     }
 
     @Override
     public Mono<?> process(CommandContext ctx) {
         if (ctx.hasFlag(FLAG_LIST)) {
-            Collection<String> tricks = ctx.hasFlag(FLAG_GLOBAL) ? globalTricks.keySet() : storage.get(ctx).orElse(Collections.emptyMap()).keySet();
+            Collection<String> tricks = ctx.hasFlag(FLAG_GLOBAL) ? globalTricks.keySet() : storage.get(ctx).orElseGet(ConcurrentHashMap::new).keySet();
             if (tricks.isEmpty()) {
                 return ctx.error("No tricks to list!");
             } else {
@@ -218,6 +227,10 @@ public class CommandTrick extends CommandPersisted<Map<String, TrickData>> {
             if (type == null) {
                 return ctx.error("No such type \"" + typeId + "\"");
             }
+            final String trick = ctx.getArg(ARG_TRICK);
+            if (!Patterns.VALID_TRICK_NAME.matcher(trick).matches() || Patterns.DISCORD_MENTION.matcher(trick).find()) {
+                return ctx.error("Invalid trick name \"" + trick + "\"");
+            }
             String args = ctx.getArg(ARG_PARAMS);
             if (ctx.hasFlag(FLAG_FETCH)) {
                 try {
@@ -234,26 +247,25 @@ public class CommandTrick extends CommandPersisted<Map<String, TrickData>> {
                     args = codematcher.group(2).trim();
                 }
             }
-            TrickData data = new TrickData(type, args, ctx.getAuthor().get().getId().asLong());
-            final String trick = ctx.getArg(ARG_TRICK);
-            if (K9.commands.findCommand((Snowflake) null, trick).isPresent() && !ctx.getAuthor().filter(CommandRegistrar::isAdmin).isPresent()) {
+            if (ctx.getK9().getCommands().findCommand((Snowflake) null, trick).isPresent() && !ctx.getAuthor().filter(ctx.getK9().getCommands()::isAdmin).isPresent()) {
                 return ctx.error("Cannot add a trick with the same name as a command.");
             }
             TrickData existing;
             if (ctx.hasFlag(FLAG_GLOBAL)) {
-                if (!CommandRegistrar.isAdmin(ctx.getAuthor().get())) {
+                if (!ctx.getK9().getCommands().isAdmin(ctx.getAuthor().get())) {
                     return ctx.error("You do not have permission to add global tricks.");
                 }
                 existing = globalTricks.get(trick);
-                globalTricks.put(trick, data);
+                globalTricks.put(trick, new TrickData(type, args, existing == null ? ctx.getAuthorId().get().asLong() : existing.getOwner()));
                 globalHelper.writeJson("global_tricks.json", globalTricks);
-                trickCache.getOrDefault(null, new HashMap<>()).remove(trick);
+                trickCache.getOrDefault(0L, new HashMap<>()).remove(trick);
             } else {
                 Guild guild = ctx.getGuild().block();
                 if (guild == null) {
                     return ctx.error("Cannot add local tricks in private message.");
                 }
                 existing = storage.get(ctx).get().get(trick);
+                TrickData data;
                 if (existing != null) {
                     if (existing.getOwner() != ctx.getAuthor().get().getId().asLong() && !REMOVE_PERMS.matches(ctx).block()) {
                         return ctx.error("A trick with this name already exists in this guild.");
@@ -261,15 +273,18 @@ public class CommandTrick extends CommandPersisted<Map<String, TrickData>> {
                     if (!ctx.hasFlag(FLAG_UPDATE)) {
                         return ctx.error("A trick with this name already exists! Use -u to overwrite.");
                     }
+                    data = new TrickData(type, args, existing.getOwner());
                 } else if (ctx.hasFlag(FLAG_UPDATE)) {
                     return ctx.error("No trick with that name exists to update.");
+                } else {
+                    data = new TrickData(type, args, ctx.getAuthor().get().getId().asLong());
                 }
                 storage.get(ctx).get().put(trick, data);
                 trickCache.getOrDefault(guild.getId().asLong(), new HashMap<>()).remove(trick);
             }
             return ctx.reply(existing == null ? "Added new trick!" : "Updated trick!");
         } else if (ctx.hasFlag(FLAG_REMOVE)) {
-            if (ctx.hasFlag(FLAG_GLOBAL) && !CommandRegistrar.isAdmin(ctx.getAuthor().get())) {
+            if (ctx.hasFlag(FLAG_GLOBAL) && !ctx.getK9().getCommands().isAdmin(ctx.getAuthor().get())) {
                 return ctx.error("You do not have permission to remove global tricks!");
             }
             String id = ctx.getArg(ARG_TRICK);
@@ -294,7 +309,7 @@ public class CommandTrick extends CommandPersisted<Map<String, TrickData>> {
             if (data == null || ctx.hasFlag(FLAG_GLOBAL)) {
                 data = globalTricks.get(ctx.getArg(ARG_TRICK));
                 if (data == null) {
-                    if (!ctx.getMessage().getContent().get().startsWith(CommandListener.getPrefix(ctx.getGuildId()) + getTrickPrefix(ctx.getGuildId()))) {
+                    if (!ctx.getMessage().getContent().startsWith(CommandListener.getPrefix(ctx.getGuildId()) + getTrickPrefix(ctx.getGuildId()))) {
                         return ctx.error("No such trick!");
                     }
                     return Mono.empty();
@@ -359,7 +374,7 @@ public class CommandTrick extends CommandPersisted<Map<String, TrickData>> {
     }
     
     Trick getTrick(String name, @Nullable Snowflake guild, TrickData td, boolean global) {
-        Map<String, Trick> tricks = trickCache.computeIfAbsent(global || guild == null ? null : guild.asLong(), id -> new HashMap<>());
+        Map<String, Trick> tricks = trickCache.computeIfAbsent(global || guild == null ? 0L : guild.asLong(), id -> new ConcurrentHashMap<>());
         return tricks.computeIfAbsent(name, input -> TrickFactories.INSTANCE.create(td.getType(), td.getInput()));
     }
 

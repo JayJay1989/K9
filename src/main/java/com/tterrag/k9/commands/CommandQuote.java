@@ -1,11 +1,11 @@
 package com.tterrag.k9.commands;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -22,6 +22,7 @@ import com.tterrag.k9.commands.api.Command;
 import com.tterrag.k9.commands.api.CommandContext;
 import com.tterrag.k9.commands.api.CommandPersisted;
 import com.tterrag.k9.commands.api.Flag;
+import com.tterrag.k9.commands.api.ReadyContext;
 import com.tterrag.k9.util.EmbedCreator;
 import com.tterrag.k9.util.ListMessageBuilder;
 import com.tterrag.k9.util.NullHelper;
@@ -30,15 +31,14 @@ import com.tterrag.k9.util.Requirements;
 import com.tterrag.k9.util.Requirements.RequiredType;
 import com.tterrag.k9.util.annotation.Nullable;
 
-import discord4j.core.DiscordClient;
+import discord4j.common.util.Snowflake;
 import discord4j.core.event.domain.message.ReactionAddEvent;
 import discord4j.core.object.entity.Message;
-import discord4j.core.object.entity.TextChannel;
 import discord4j.core.object.entity.User;
+import discord4j.core.object.entity.channel.TextChannel;
 import discord4j.core.object.reaction.ReactionEmoji;
-import discord4j.core.object.util.Permission;
-import discord4j.core.object.util.Snowflake;
 import discord4j.core.spec.EmbedCreateSpec;
+import discord4j.rest.util.Permission;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -49,7 +49,7 @@ import reactor.core.publisher.Mono;
 
 @Slf4j
 @Command
-public class CommandQuote extends CommandPersisted<Map<Integer, Quote>> {
+public class CommandQuote extends CommandPersisted<ConcurrentHashMap<Integer, Quote>> {
     
     private interface BattleMessageSupplier {
         
@@ -211,7 +211,7 @@ public class CommandQuote extends CommandPersisted<Map<Integer, Quote>> {
             if (msg != null && allBattles.contains(msg)) {
                 if (!emoji.equals(ONE) && !emoji.equals(TWO) && !emoji.equals(KILL) && !emoji.equals(SPARE)) {
                     msg.removeReaction(emoji, event.getUserId()).subscribe();
-                } else if (!event.getUserId().equals(event.getClient().getSelfId().get())) {
+                } else if (!event.getUserId().equals(event.getClient().getSelfId())) {
                     msg.getReactions().stream()
                             .filter(r -> !r.getEmoji().equals(emoji))
                             .filter(r -> msg.getReactors(r.getEmoji())
@@ -282,12 +282,10 @@ public class CommandQuote extends CommandPersisted<Map<Integer, Quote>> {
         }
         
         public Mono<Void> updateTime(CommandContext ctx) {
-            BattleThread battle = battles.get(ctx.getChannelId());
-            if (battle != null) {
-                return getTime(ctx).doOnNext(battle.time::set).then();
-            } else {
-                return ctx.error("No battle(s) running in this channel!");
-            }
+            return Mono.fromSupplier(() -> battles.get(ctx.getChannelId()))
+                    .switchIfEmpty(ctx.error("No battle(s) running in this channel!"))
+                    .flatMap(b -> getTime(ctx).doOnNext(b.time::set))
+                    .then();
         }
         
         public Mono<BattleThread> battle(CommandContext ctx) {
@@ -389,7 +387,7 @@ public class CommandQuote extends CommandPersisted<Map<Integer, Quote>> {
     private final BattleManager battleManager = new BattleManager();
     
     public CommandQuote() {
-        super("quote", false, HashMap::new);
+        super("quote", false, ConcurrentHashMap::new);
 //        quotes.put(id++, "But noone cares - HellFirePVP");
 //        quotes.put(id++, "CRAFTTWEAKER I MEANT CRAFTTWEAKER - Drullkus");
 //        quotes.put(id++, "oh yeah im dumb - Kit");
@@ -398,14 +396,16 @@ public class CommandQuote extends CommandPersisted<Map<Integer, Quote>> {
     }
     
     @Override
-    protected TypeToken<Map<Integer, Quote>> getDataType() {
-        return new TypeToken<Map<Integer, Quote>>(){};
+    protected TypeToken<ConcurrentHashMap<Integer, Quote>> getDataType() {
+        return new TypeToken<ConcurrentHashMap<Integer, Quote>>(){};
     }
     
     @Override
-    public void onRegister(DiscordClient client) {
-        super.onRegister(client);
-        client.getEventDispatcher().on(ReactionAddEvent.class).subscribe(battleManager::onReactAdd);
+    public Mono<?> onReady(ReadyContext ctx) {
+        return super.onReady(ctx)
+                .then(ctx.on(ReactionAddEvent.class)
+                        .doOnNext(battleManager::onReactAdd)
+                        .then());
     }
     
     Random rand = new Random();
@@ -455,7 +455,7 @@ public class CommandQuote extends CommandPersisted<Map<Integer, Quote>> {
 
             Map<Integer, Quote> quotes = storage.get(ctx.getMessage()).block();
             int id = quotes.keySet().stream().mapToInt(Integer::intValue).max().orElse(0) + 1;
-            quotes.put(id, new Quote(ctx.sanitize(quote).block(), ctx.sanitize(author).block(), ctx.getAuthor().get()));
+            quotes.put(id, new Quote(quote, author, ctx.getAuthor().get()));
             return ctx.reply("Added quote #" + id + "!");
         } else if (ctx.hasFlag(FLAG_REMOVE)) {
             int index = Integer.parseInt(ctx.getFlag(FLAG_REMOVE));

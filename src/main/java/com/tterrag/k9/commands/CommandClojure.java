@@ -61,19 +61,20 @@ import discord4j.core.object.Embed.Thumbnail;
 import discord4j.core.object.Embed.Video;
 import discord4j.core.object.entity.Attachment;
 import discord4j.core.object.entity.Guild;
-import discord4j.core.object.entity.GuildChannel;
+import discord4j.core.object.entity.GuildEmoji;
 import discord4j.core.object.entity.Member;
 import discord4j.core.object.entity.Message;
-import discord4j.core.object.entity.MessageChannel;
 import discord4j.core.object.entity.Role;
-import discord4j.core.object.entity.TextChannel;
 import discord4j.core.object.entity.User;
+import discord4j.core.object.entity.channel.GuildChannel;
+import discord4j.core.object.entity.channel.MessageChannel;
+import discord4j.core.object.entity.channel.TextChannel;
 import discord4j.core.object.presence.Activity;
 import discord4j.core.object.presence.Presence;
-import discord4j.core.object.util.Image.Format;
-import discord4j.core.object.util.Permission;
-import discord4j.core.object.util.Snowflake;
 import discord4j.rest.http.client.ClientException;
+import discord4j.rest.util.Image.Format;
+import discord4j.rest.util.Permission;
+import discord4j.common.util.Snowflake;
 import lombok.SneakyThrows;
 import lombok.Value;
 import lombok.experimental.Accessors;
@@ -160,8 +161,8 @@ public class CommandClojure extends CommandBase {
                                 .bindOptional("details", Activity::getDetails, String.class)
                                 .bindOptional("state", Activity::getState, String.class)
                                 .bindOptional("party_id", Activity::getPartyId, String.class)
-                                .bindOptionalInt("party_size", Activity::getCurrentPartySize)
-                                .bindOptionalInt("max_party_size", Activity::getMaxPartySize)
+                                .bindOptionalLong("party_size", Activity::getCurrentPartySize)
+                                .bindOptionalLong("max_party_size", Activity::getMaxPartySize)
                                 .bindOptional("large_image", ActivityUtil::getLargeImageUrl, String.class)
                                 .bindOptional("large_text", Activity::getLargeText, String.class)
                                 .bindOptional("small_image", ActivityUtil::getSmallImageUrl, String.class)
@@ -244,7 +245,7 @@ public class CommandClojure extends CommandBase {
                 .bindOptional("splash", g -> g.getSplashUrl(Format.WEB_P), String.class)
                 .bind("owner", g -> g.getOwnerId().asLong())
                 .bind("region", Guild::getRegionId)
-                .bindOptionalInt("member_count", Guild::getMemberCount);
+                .bind("member_count", Guild::getMemberCount);
         
         // Simple data bean representing the current guild
         addContextVar("guild", ctx -> ctx.getGuild().map(g -> TypeBindingPersistentMap.create(guildBinding, g)));
@@ -253,7 +254,7 @@ public class CommandClojure extends CommandBase {
                 .bind("id", m -> m.getId().asLong())
                 .bind("channel", m -> m.getChannelId().asLong())
                 .bindOptional("author", m -> m.getAuthor().map(User::getId).map(Snowflake::asLong), long.class)
-                .bindOptional("content", Message::getContent, String.class)
+                .bind("content", Message::getContent, String.class)
                 .bind("timestamp", Message::getTimestamp)
                 .bindOptional("edited_timestamp", Message::getEditedTimestamp, Instant.class)
                 .bind("tts", Message::isTts)
@@ -291,12 +292,11 @@ public class CommandClojure extends CommandBase {
                                 .bind("width", Thumbnail::getWidth))
                         .bindRecursiveOptional("video", Embed::getVideo, new TypeBinding<Video>("Video")
                                 .bind("url", Video::getUrl)
-                                .bind("proxy_url", Video::getProxyUrl)
                                 .bind("height", Video::getHeight)
                                 .bind("width", Video::getWidth))
                         .bindRecursiveOptional("provider", Embed::getProvider, new TypeBinding<Provider>("Provider")
                                 .bind("name", Provider::getName)
-                                .bind("url", Provider::getUrl))
+                                .bindOptional("url", Provider::getUrl, String.class))
                         .bindRecursiveOptional("author", Embed::getAuthor, new TypeBinding<Author>("Author")
                                 .bind("name", Author::getName)
                                 .bind("url", Author::getUrl)
@@ -338,9 +338,43 @@ public class CommandClojure extends CommandBase {
                 return "Function:\n\tMessage ID -> Message\n\nSee Also: `*message*`";
             }
         }));
+        
+        TypeBinding<GuildEmoji> emoteBinding = new TypeBinding<GuildEmoji>("Emote")
+                .bind("id", e -> e.getId().asLong())
+                .bind("name", GuildEmoji::getName)
+                .bind("animated", GuildEmoji::isAnimated)
+                .bind("managed", GuildEmoji::isManaged)
+                .bind("requires_colons", GuildEmoji::requiresColons)
+                .bind("image", GuildEmoji::getImageUrl)
+                .bind("formatted", GuildEmoji::asFormat)
+                .bind("roles", e -> e.getRoleIds().stream().mapToLong(Snowflake::asLong).toArray())
+                // This is broken in D4J, dummy out for now
+                .bindOptional("creator", e -> Optional.empty(), long.class);//e.getUser().onErrorResume($ -> Mono.empty()).blockOptional().map(User::getId), long.class);
+        
+        addContextVar("emotes", ctx -> ctx.getGuild().map(guild -> new AFn() {
+           
+            @Override
+            public Object invoke() {
+                return PersistentVector.create(guild.getEmojiIds().stream().map(Snowflake::asLong).toArray());
+            }
+
+            @Override
+            public Object invoke(Object arg1) {
+                GuildEmoji emote = guild.getGuildEmojiById(Snowflake.of(((Number)arg1).longValue())).block();
+                if (emote == null) {
+                    throw new IllegalArgumentException("No emote found");
+                }
+                return TypeBindingPersistentMap.create(emoteBinding, emote);
+            }
+            
+            @Override
+            public String toString() {
+                return "Function:\n\t() -> list of emote IDs\n\tID -> Emote\n\n" + emoteBinding.toString();
+            }
+        }));
 
         // A function for looking up quotes, given an ID, or pass no arguments to return a vector of valid quote IDs
-        addContextVar("quotes", ctx -> Mono.justOrEmpty(K9.commands.findCommand(ctx, "quote"))
+        addContextVar("quotes", ctx -> Mono.justOrEmpty(ctx.getK9().getCommands().findCommand(ctx, "quote"))
                 .cast(CommandQuote.class)
                 .transform(Monos.mapOptional(cmd -> cmd.getData(ctx)))
                 .map(data -> 
@@ -378,7 +412,7 @@ public class CommandClojure extends CommandBase {
         ));
 
         // A function for looking up tricks, given a name. Optionally pass "true" as second param to force global lookup
-        addContextVar("tricks", ctx -> Mono.justOrEmpty(K9.commands.findCommand(ctx, "trick"))
+        addContextVar("tricks", ctx -> Mono.justOrEmpty(ctx.getK9().getCommands().findCommand(ctx, "trick"))
                 .cast(CommandTrick.class)
                 .transform(Monos.mapOptional(cmd -> cmd.getData(ctx)
                         .map(data -> new AFn() {
@@ -525,9 +559,12 @@ public class CommandClojure extends CommandBase {
     
     private static String asLiteral(Object arg) {
         if (arg instanceof String) {
-            if (!NumberUtils.isNumber((String) arg)) {
-                return "\"" + ((String)arg).replace("\"", "\\\"") + "\"";
+            if (NumberUtils.isNumber((String) arg)) {
+                // Clojure does not handle java literals perfectly, such as strings like "4D",
+                // so we parse and re-encode the number as entirely numeric.
+                return NumberUtils.createNumber((String) arg).toString();
             }
+            return "\"" + ((String)arg).replace("\"", "\\\"") + "\"";
         }
         if (arg != null) {
             return arg.toString();

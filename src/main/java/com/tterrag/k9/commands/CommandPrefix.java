@@ -9,19 +9,21 @@ import com.google.gson.TypeAdapter;
 import com.google.gson.reflect.TypeToken;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
+import com.tterrag.k9.K9;
 import com.tterrag.k9.commands.CommandPrefix.PrefixData;
 import com.tterrag.k9.commands.api.Command;
 import com.tterrag.k9.commands.api.CommandContext;
 import com.tterrag.k9.commands.api.CommandPersisted;
 import com.tterrag.k9.commands.api.Flag;
+import com.tterrag.k9.commands.api.ReadyContext;
 import com.tterrag.k9.listeners.CommandListener;
 import com.tterrag.k9.util.DelegatingTypeReader;
 import com.tterrag.k9.util.Requirements;
 import com.tterrag.k9.util.Requirements.RequiredType;
 
-import discord4j.core.DiscordClient;
-import discord4j.core.object.util.Permission;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Permission;
+import discord4j.common.util.Snowflake;
+import discord4j.core.GatewayDiscordClient;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -74,10 +76,10 @@ public class CommandPrefix extends CommandPersisted<PrefixData> {
     }
     
     @Override
-    public void init(DiscordClient client, File dataFolder, Gson gson) {
-        super.init(client, dataFolder, gson);
+    public Mono<?> onReady(ReadyContext ctx) {
         CommandListener.prefixes = id -> this.storage.get(Snowflake.of(id)).getCommand();
         CommandTrick.prefixes = id -> this.storage.get(Snowflake.of(id)).getTrick();
+        return super.onReady(ctx);
     }
     
     @Override

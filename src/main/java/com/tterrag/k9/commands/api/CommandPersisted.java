@@ -10,9 +10,8 @@ import com.google.gson.reflect.TypeToken;
 import com.tterrag.k9.util.GuildStorage;
 import com.tterrag.k9.util.SaveHelper;
 
-import discord4j.core.DiscordClient;
+import discord4j.common.util.Snowflake;
 import discord4j.core.object.entity.Guild;
-import discord4j.core.object.util.Snowflake;
 import reactor.core.publisher.Mono;
 import reactor.util.annotation.NonNull;
 import reactor.util.annotation.Nullable;
@@ -29,19 +28,27 @@ public abstract class CommandPersisted<T> extends CommandBase {
     }
     
     @Override
-    public void init(DiscordClient client, File dataFolder, Gson gson) {
-        super.init(client, dataFolder, gson);
-        storage = new GuildStorage<>(id -> newHelper(dataFolder, id, gson).fromJson(getFileName(), getDataType()));
+    public Mono<?> onReady(ReadyContext ctx) {
+        return super.onReady(ctx)
+                .then(Mono.fromRunnable(() -> 
+                    storage = new GuildStorage<>(id -> {
+                        T ret = newHelper(ctx.getDataFolder(), id, ctx.getGson()).fromJson(getFileName(), getDataType());
+                        onLoad(id, ret);
+                        return ret;
+                    })));
     }
     
     @Override
     public void save(File dataFolder, Gson gson) {
         if (storage != null) {
-            for (Entry<Long, T> e : storage) {
+            for (Entry<Long, T> e : storage.snapshot().entrySet()) {
                 SaveHelper<T> helper = newHelper(dataFolder, e.getKey(), gson);
                 helper.writeJson(getFileName(), e.getValue(), getDataType());
             }
         }
+    }
+    
+    protected void onLoad(long guild, T data) {    
     }
     
     private SaveHelper<T> newHelper(File root, long guild, Gson gson) {

@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -156,6 +157,10 @@ public class TypeBinding<T> {
     public TypeBinding<T> bindOptionalInt(String name, Function<T, OptionalInt> val) {
         return bind(name, new ObjectBinding(val.andThen(o -> o.isPresent() ? (Integer) o.getAsInt() : null), int.class, true));
     }
+    
+    public TypeBinding<T> bindOptionalLong(String name, Function<T, OptionalLong> val) {
+        return bind(name, new ObjectBinding(val.andThen(o -> o.isPresent() ? (Long) o.getAsLong() : null), long.class, true));
+    }
 
     public <R> TypeBinding<T> bindRecursive(String name, Function<T, R> converter, TypeBinding<R> creator) {
         return bind(name, new SingleRecursiveBinding<>(creator, converter));
@@ -166,7 +171,7 @@ public class TypeBinding<T> {
     }
 
     public <R> TypeBinding<T> bindRecursiveOptional(String name, Function<T, Optional<R>> converter, TypeBinding<R> creator) {
-        return bind(name, new SingleRecursiveBinding<>(creator, converter.andThen(o -> o.orElse(null))));
+        return bind(name, new SingleRecursiveBinding<>(creator.withTypeName(creator.getTypeName() + "?"), converter.andThen(o -> o.orElse(null))));
     }
 
     public Map<String, Object> toMap(T in) {

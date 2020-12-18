@@ -12,11 +12,12 @@ import com.tterrag.k9.util.annotation.NonNullMethods;
 import com.tterrag.k9.util.annotation.Nullable;
 
 import discord4j.core.event.domain.message.ReactionAddEvent;
-import discord4j.core.object.entity.GuildChannel;
 import discord4j.core.object.entity.Message;
-import discord4j.core.object.entity.MessageChannel;
+import discord4j.core.object.entity.channel.Channel.Type;
+import discord4j.core.object.entity.channel.GuildChannel;
+import discord4j.core.object.entity.channel.MessageChannel;
 import discord4j.core.object.reaction.ReactionEmoji;
-import discord4j.core.object.util.Snowflake;
+import discord4j.common.util.Snowflake;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import lombok.Getter;
@@ -54,7 +55,7 @@ public enum PaginatedMessageFactory {
 			return sentMessage = messages.get(page).send(channel)
 			        .doOnNext(msg -> byMessageId.put(msg.getId().asLong(), PaginatedMessage.this))
 			        .flatMap(msg -> msg.addReaction(ReactionEmoji.unicode(LEFT_ARROW)).thenReturn(msg))
-			        .flatMap(msg -> getParent() != null ? msg.addReaction(ReactionEmoji.unicode(X)).thenReturn(msg) : Mono.just(msg))
+			        .flatMap(msg -> channel.getType() != Type.DM && getParent() != null ? msg.addReaction(ReactionEmoji.unicode(X)).thenReturn(msg) : Mono.just(msg))
 			        .flatMap(msg -> msg.addReaction(ReactionEmoji.unicode(RIGHT_ARROW)).thenReturn(msg))
 			        .cache();
         }
@@ -155,7 +156,7 @@ public enum PaginatedMessageFactory {
 	public Mono<?> onReactAdd(ReactionAddEvent event) {
 	    Snowflake msgId = event.getMessageId();
 		ReactionEmoji reaction = event.getEmoji();
-		if (!event.getClient().getSelfId().get().equals(event.getUserId())) {
+		if (!event.getClient().getSelfId().equals(event.getUserId())) {
 			String unicode = reaction.asUnicodeEmoji().isPresent() ? reaction.asUnicodeEmoji().get().getRaw() : null;
 			PaginatedMessage message = byMessageId.get(msgId.asLong());
             if (message != null) {

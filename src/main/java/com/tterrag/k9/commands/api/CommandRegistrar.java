@@ -25,10 +25,10 @@ import com.tterrag.k9.util.NullHelper;
 import com.tterrag.k9.util.Patterns;
 import com.tterrag.k9.util.annotation.Nullable;
 
-import discord4j.core.DiscordClient;
+import discord4j.common.util.Snowflake;
+import discord4j.core.GatewayDiscordClient;
 import discord4j.core.event.domain.message.MessageCreateEvent;
 import discord4j.core.object.entity.User;
-import discord4j.core.object.util.Snowflake;
 import discord4j.rest.http.client.ClientException;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
@@ -47,7 +47,7 @@ public class CommandRegistrar {
 		DATA_FOLDER.mkdirs();
 	}
 	
-	private final DiscordClient client;
+	private final K9 k9;
 	
 	private final Map<String, ICommand> commands = Maps.newTreeMap();
 	private final CommandControl ctrl = new CommandControl();
@@ -60,19 +60,19 @@ public class CommandRegistrar {
 	
 	private Disposable autoSaveSubscriber;
 	
-	public CommandRegistrar(DiscordClient client) {
-	    this.client = client;
+	public CommandRegistrar(K9 k9) {
+	    this.k9 = k9;
 	}
 
 	public Mono<ICommand> invokeCommand(MessageCreateEvent evt, String name, String argstr) {
 		Optional<ICommand> commandReq = findCommand(evt.getGuildId().orElse(null), name); 
 		
-		ICommand command = commandReq.filter(c -> !c.admin() || evt.getMessage().getAuthor().map(CommandRegistrar::isAdmin).orElse(false)).orElse(null);
+		ICommand command = commandReq.filter(c -> !c.admin() || evt.getMessage().getAuthor().map(this::isAdmin).orElse(false)).orElse(null);
 		if (command == null) {
 		    return Mono.empty();
 		}
 		
-	    CommandContext ctx = new CommandContext(evt);
+	    CommandContext ctx = new CommandContext(k9, evt);
 		
 		if (!command.requirements().matches(ctx).block()) {
 		    return evt.getMessage().getChannel()
@@ -146,7 +146,7 @@ public class CommandRegistrar {
                 argstr = argstr.replaceFirst(Pattern.quote(match) + "\\s*", "").trim();
                 args.put(arg, match);
             } else if (required) {
-                return ctx.reply("Argument " + arg.name() + " does not accept input: " + argstr).thenReturn(command);
+                return ctx.reply("Argument " + arg.name() + " does not accept input: " + argstr + " (does not match `" + arg.pattern().pattern() + "`)").thenReturn(command);
             }
         }
 
@@ -154,21 +154,19 @@ public class CommandRegistrar {
             final Mono<?> commandResult = command.process(ctx.withFlags(flags).withArgs(args))
                     .doOnError(t -> log.error("Exception invoking command: ", t))
                     .onErrorResume(CommandException.class, t -> ctx.reply("Could not process command: " + t).then(Mono.empty()))
-                    .onErrorResume(ClientException.class, t -> ctx.reply("Discord error processing command: " + t.getStatus() + " - " + t.getErrorResponse().getFields()).then(Mono.empty()))
+                    .onErrorResume(ClientException.class, t -> ctx.reply("Discord error processing command: " + t.getStatus() + " - " + t.getErrorResponse().map(e -> e.getFields().toString()).orElse("{}")).then(Mono.empty()))
                     .onErrorResume(t -> ctx.reply("Unexpected error processing command: " + t).then(Mono.empty()));
             return evt.getMessage().getChannel() // Automatic typing indicator
                     .flatMap(c -> c.typeUntil(commandResult).then())
                     .thenReturn(command);
-//        } catch (CommandException e) { // TODO remove these blocks
-//            return ctx.reply("Could not process command: " + e);
         } catch (RuntimeException e) {
             log.error("Exception invoking command: ", e);
             return ctx.reply("Unexpected error processing command: " + e).thenReturn(command); // TODO should this be different?
         }
     }
 	
-	public static boolean isAdmin(User user) {
-	    return K9.isAdmin(user.getId());
+	public boolean isAdmin(User user) {
+	    return k9.isAdmin(user.getId());
 	}
 	
 	public Optional<ICommand> findCommand(CommandContext ctx, String name) {
@@ -218,7 +216,7 @@ public class CommandRegistrar {
 	    if (!command.isTransient()) {
 	        commands.put(command.getName(), command);
 	        command.gatherParsers(builder);
-	        command.onRegister(client);
+	        command.onRegister(k9);
 	    }
 	    command.getChildren().forEach(this::registerCommand);
 	}
@@ -228,17 +226,19 @@ public class CommandRegistrar {
         command.onUnregister();
     }
     
-    public void complete() {
+    public Mono<Void> complete(GatewayDiscordClient gateway) {
         registerCommand(ctrl);
         locked = true;
         gson = NullHelper.notnullL(builder.create(), "GsonBuilder#create");
-        for (ICommand c : commands.values()) {
-            c.init(client, DATA_FOLDER, gson);
-        }
         autoSaveSubscriber = Flux.interval(Duration.ofSeconds(30), Duration.ofMinutes(5))
                 .doOnNext($ -> saveAll())
                 .publishOn(Schedulers.newSingle("Command Auto-save"))
                 .subscribe();
+        
+        final ReadyContext ctx = new ReadyContext(k9, gateway, DATA_FOLDER, gson); 
+        return Flux.fromIterable(commands.values())
+                .flatMap(c -> c.onReady(ctx))
+                .then();
     }
     
     private void saveAll() {
@@ -266,6 +266,8 @@ public class CommandRegistrar {
         if (guild == null) {
             return commands.values();
         }
-        return commands.values().stream().filter(c -> !ctrl.getData(guild).getCommandBlacklist().contains(c.getName()))::iterator;
+        return commands.values().stream()
+                .filter(c -> !ctrl.getData(guild).getCommandBlacklist().contains(c.getName()))
+                .collect(Collectors.toList());
     }
 }
